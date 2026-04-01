@@ -164,6 +164,34 @@ final class GitBarAppModel {
             }
         }
     }
+
+    func submitReview(pullRequestId: String, event: PullRequestReviewEvent, body: String?) async {
+        let token = authToken.trimmed
+        guard !token.isEmpty, hasValidToken else {
+            notifier.notify(body: "Cannot submit review: not authenticated.")
+            return
+        }
+
+        do {
+            try await client.submitReview(
+                pullRequestId: pullRequestId,
+                event: event,
+                body: body,
+                baseURL: settings.normalizedAPIBaseURL,
+                token: token
+            )
+            notifier.notify(body: "Review submitted: \(event.rawValue.lowercased().replacingOccurrences(of: "_", with: " "))")
+            await refresh(sendNotification: false)
+        } catch {
+            notifier.notify(body: "Review failed: \(error.gitBarMessage)")
+        }
+    }
+}
+
+struct ReviewActionContext {
+    let nodeId: String
+    let prNumber: Int
+    let event: PullRequestReviewEvent
 }
 
 @MainActor
@@ -176,6 +204,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var observers: [NSObjectProtocol] = []
     private var preferencesWindowController: NSWindowController?
     private var aboutWindowController: NSWindowController?
+    private var reviewPanel: NSPanel?
+    private var reviewTextView: NSTextView?
+    private var reviewNodeId: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -242,10 +273,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
+    private func approvePullRequest(_ sender: NSMenuItem) {
+        guard let nodeId = sender.representedObject as? String else { return }
+        Task {
+            await model.submitReview(pullRequestId: nodeId, event: .approve, body: nil)
+            rebuildMenu()
+        }
+    }
+
+    @objc
+    private func reviewPullRequestWithBody(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? ReviewActionContext else { return }
+        showReviewPanel(context: context)
+    }
+
+    private func showReviewPanel(context: ReviewActionContext) {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 200),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "\(context.event == .requestChanges ? "Request Changes" : "Comment") on #\(context.prNumber)"
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+
+        let textView = NSTextView(frame: NSRect(x: 16, y: 50, width: 328, height: 110))
+        textView.isRichText = false
+        textView.font = .systemFont(ofSize: 13)
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.drawsBackground = true
+        textView.backgroundColor = .controlBackgroundColor
+
+        let scrollView = NSScrollView(frame: NSRect(x: 16, y: 50, width: 328, height: 110))
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let sendButton = NSButton(title: "Send", target: nil, action: nil)
+        sendButton.frame = NSRect(x: 264, y: 12, width: 80, height: 28)
+        sendButton.bezelStyle = .rounded
+        sendButton.keyEquivalent = "\r"
+
+        let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+        cancelButton.frame = NSRect(x: 176, y: 12, width: 80, height: 28)
+        cancelButton.bezelStyle = .rounded
+        cancelButton.keyEquivalent = "\u{1b}"
+
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
+        contentView.addSubview(scrollView)
+        contentView.addSubview(sendButton)
+        contentView.addSubview(cancelButton)
+        panel.contentView = contentView
+
+        sendButton.target = self
+        sendButton.action = #selector(submitReviewFromPanel(_:))
+        sendButton.tag = context.event == .requestChanges ? 0 : 1
+
+        cancelButton.target = self
+        cancelButton.action = #selector(closeReviewPanel(_:))
+
+        reviewPanel = panel
+        reviewTextView = textView
+        reviewNodeId = context.nodeId
+
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        textView.window?.makeFirstResponder(textView)
+    }
+
+    @objc
+    private func submitReviewFromPanel(_ sender: NSButton) {
+        guard let nodeId = reviewNodeId else { return }
+        let body = reviewTextView?.string ?? ""
+        let event: PullRequestReviewEvent = sender.tag == 0 ? .requestChanges : .comment
+
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        reviewPanel?.close()
+        reviewPanel = nil
+        reviewTextView = nil
+        reviewNodeId = nil
+
+        Task {
+            await model.submitReview(pullRequestId: nodeId, event: event, body: body)
+            rebuildMenu()
+        }
+    }
+
+    @objc
+    private func closeReviewPanel(_ sender: Any?) {
+        reviewPanel?.close()
+        reviewPanel = nil
+        reviewTextView = nil
+        reviewNodeId = nil
+    }
+
+    @objc
     private func openPreferencesWindow() {
         let controller = makeWindowController(
             title: "Preferences",
-            size: NSSize(width: 720, height: 560),
+            size: NSSize(width: 480, height: 580),
             rootView: PreferencesView(model: model)
         )
 
@@ -439,22 +570,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if !pullRequest.buildChecks.isEmpty {
-            let submenu = NSMenu()
-            for group in pullRequest.buildChecks {
-                let groupHeader = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
-                groupHeader.isEnabled = false
-                submenu.addItem(groupHeader)
+        let isOwnPR = pullRequest.author.login == model.viewerLogin
+        let hasReviewActions = !isOwnPR && !pullRequest.isDraft
+        let hasBuildChecks = !pullRequest.buildChecks.isEmpty
 
-                for check in group.items {
-                    let buildItem = NSMenuItem(title: check.name, action: #selector(openRepresentedURL(_:)), keyEquivalent: "")
-                    buildItem.target = self
-                    buildItem.representedObject = check.detailsURL
-                    buildItem.toolTip = check.subtitle
-                    buildItem.image = NSImage(named: check.status.itemImageName)?.tinted(with: check.status.dotColor)
-                    submenu.addItem(buildItem)
+        if hasReviewActions || hasBuildChecks {
+            let submenu = NSMenu()
+
+            if hasReviewActions {
+                let approveItem = NSMenuItem(title: "Approve", action: #selector(approvePullRequest(_:)), keyEquivalent: "")
+                approveItem.target = self
+                approveItem.representedObject = pullRequest.nodeId
+                approveItem.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Approve")
+                submenu.addItem(approveItem)
+
+                let requestChangesItem = NSMenuItem(title: "Request Changes…", action: #selector(reviewPullRequestWithBody(_:)), keyEquivalent: "")
+                requestChangesItem.target = self
+                requestChangesItem.representedObject = ReviewActionContext(nodeId: pullRequest.nodeId, prNumber: pullRequest.number, event: .requestChanges)
+                requestChangesItem.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: "Request Changes")
+                submenu.addItem(requestChangesItem)
+
+                let commentItem = NSMenuItem(title: "Comment…", action: #selector(reviewPullRequestWithBody(_:)), keyEquivalent: "")
+                commentItem.target = self
+                commentItem.representedObject = ReviewActionContext(nodeId: pullRequest.nodeId, prNumber: pullRequest.number, event: .comment)
+                commentItem.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "Comment")
+                submenu.addItem(commentItem)
+
+                if hasBuildChecks {
+                    submenu.addItem(.separator())
                 }
             }
+
+            if hasBuildChecks {
+                for group in pullRequest.buildChecks {
+                    let groupHeader = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
+                    groupHeader.isEnabled = false
+                    submenu.addItem(groupHeader)
+
+                    for check in group.items {
+                        let buildItem = NSMenuItem(title: check.name, action: #selector(openRepresentedURL(_:)), keyEquivalent: "")
+                        buildItem.target = self
+                        buildItem.representedObject = check.detailsURL
+                        buildItem.toolTip = check.subtitle
+                        buildItem.image = NSImage(named: check.status.itemImageName)?.tinted(with: check.status.dotColor)
+                        submenu.addItem(buildItem)
+                    }
+                }
+            }
+
             item.submenu = submenu
         }
 

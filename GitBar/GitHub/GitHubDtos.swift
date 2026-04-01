@@ -153,8 +153,15 @@ struct PullRequestAuthor: Decodable, Hashable {
     static let ghost = PullRequestAuthor(login: "ghost", avatarUrl: nil)
 }
 
+enum PullRequestReviewEvent: String {
+    case approve = "APPROVE"
+    case requestChanges = "REQUEST_CHANGES"
+    case comment = "COMMENT"
+}
+
 struct PullRequestSummary: Hashable, Identifiable {
     let id: String
+    let nodeId: String
     let url: URL
     let title: String
     let number: Int
@@ -194,6 +201,7 @@ struct GraphQLError: Decodable {
 }
 
 struct GraphQLPullRequestNode: Decodable {
+    let id: String
     let url: URL
     let createdAt: Date
     let title: String
@@ -215,6 +223,7 @@ struct GraphQLPullRequestNode: Decodable {
 
         return PullRequestSummary(
             id: url.absoluteString,
+            nodeId: id,
             url: url,
             title: title,
             number: number,
@@ -314,6 +323,23 @@ struct GraphQLStatusContextNode: Decodable {
 struct GitHubViewer: Decodable {
     let login: String
     let name: String?
+}
+
+struct GraphQLReviewMutationResponse: Decodable {
+    let data: GraphQLReviewMutationData?
+    let errors: [GraphQLError]?
+}
+
+struct GraphQLReviewMutationData: Decodable {
+    let addPullRequestReview: GraphQLReviewPayload
+}
+
+struct GraphQLReviewPayload: Decodable {
+    let pullRequestReview: GraphQLReviewState
+}
+
+struct GraphQLReviewState: Decodable {
+    let state: String
 }
 
 enum GraphQLBuildMapper {

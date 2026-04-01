@@ -2,9 +2,10 @@ import SwiftUI
 
 struct StatusLegendView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Status legend")
-                .font(.headline)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             StatusLegendItemView(label: "Successful checks", tint: .green)
             StatusLegendItemView(label: "Failed checks", tint: .red)

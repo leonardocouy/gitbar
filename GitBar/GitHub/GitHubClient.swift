@@ -55,6 +55,58 @@ struct GitHubClient {
         return result.data?.search.edges.map { $0.node.toSummary(viewerLogin: viewerLogin) } ?? []
     }
 
+    func submitReview(
+        pullRequestId: String,
+        event: PullRequestReviewEvent,
+        body: String?,
+        baseURL: String,
+        token: String
+    ) async throws {
+        let endpoint = try makeURL(baseURL: baseURL, path: "/graphql")
+
+        let bodyField: String
+        if let body, !body.isEmpty {
+            let escaped = body
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: "\\n")
+            bodyField = ", body: \"\(escaped)\""
+        } else {
+            bodyField = ""
+        }
+
+        let mutation = """
+        mutation {
+          addPullRequestReview(input: {
+            pullRequestId: "\(pullRequestId)"
+            event: \(event.rawValue)
+            \(bodyField)
+          }) {
+            pullRequestReview {
+              state
+            }
+          }
+        }
+        """
+
+        let payload = ["query": mutation]
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+
+        let result = try JSONDecoder().decode(GraphQLReviewMutationResponse.self, from: data)
+        if let errors = result.errors, !errors.isEmpty {
+            throw GitHubAPIError.graphQLErrors(errors.map(\.message))
+        }
+    }
+
     private func buildQuery(section: PullRequestSectionKind, viewerLogin: String, settings: GitHubQuerySettings) -> String {
         let additionalQuery = settings.additionalQuery
         let query = [
@@ -133,6 +185,7 @@ struct GitHubClient {
             edges {
               node {
                 ... on PullRequest {
+                  id
                   number
                   createdAt
                   title
