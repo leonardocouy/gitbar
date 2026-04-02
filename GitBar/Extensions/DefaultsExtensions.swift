@@ -190,7 +190,7 @@ final class GitBarSettingsStore {
                 } else {
                     try launchService.unregister()
                 }
-                postConfigurationChange()
+                postConfigurationChange(effect: .refreshImmediately)
             } catch {
                 launchesAtLogin = oldValue
             }
