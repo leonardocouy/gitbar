@@ -14,10 +14,14 @@ env:
 
 jobs:
   build:
+    # TODO: Update to macos-26 when GitHub Actions adds Xcode 26 runners.
+    # This app targets macOS 26 (Swift 6.2 / Xcode 26) and will fail to build
+    # on macos-15 runners that only ship Xcode 16.x.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
+      # TODO: Update path when Xcode 26 becomes available on the runner.
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.0.app
 
