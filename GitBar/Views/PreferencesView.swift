@@ -59,8 +59,19 @@ struct PreferencesView: View {
             Toggle("Assigned", isOn: setting(\.showAssigned))
             Toggle("Created", isOn: setting(\.showCreated))
             Toggle("Review requested", isOn: setting(\.showReviewRequested))
+            Toggle("Custom section", isOn: setting(\.showCustom))
+
+            if model.settings.showCustom {
+                TextField("Section title", text: setting(\.customSectionTitle))
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("GitHub search query", text: setting(\.customSectionQuery))
+                    .textFieldStyle(.roundedBorder)
+            }
         } header: {
             Label("Pull Requests", systemImage: "arrow.triangle.branch")
+        } footer: {
+            Text("Custom section uses any valid GitHub PR search, such as `author:alice`, `org:softaworks label:bug`, or `team-review-requested:platform`.")
         }
     }
 

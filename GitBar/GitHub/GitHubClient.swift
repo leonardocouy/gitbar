@@ -108,11 +108,18 @@ struct GitHubClient {
     }
 
     private func buildQuery(section: PullRequestSectionKind, viewerLogin: String, settings: GitHubQuerySettings) -> String {
+        let sectionQuery = switch section {
+        case .custom:
+            settings.customSectionQuery
+        default:
+            section.queryQualifier(for: viewerLogin)
+        }
+
         let additionalQuery = settings.additionalQuery
         let query = [
             "is:open",
             "is:pr",
-            section.queryQualifier(for: viewerLogin),
+            sectionQuery,
             "archived:false",
             additionalQuery,
         ]

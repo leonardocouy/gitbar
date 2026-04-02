@@ -11,6 +11,7 @@ enum PullRequestSectionKind: String, CaseIterable, Codable, Identifiable, Hashab
     case assigned
     case created
     case reviewRequested
+    case custom
 
     var id: Self { self }
 
@@ -22,6 +23,8 @@ enum PullRequestSectionKind: String, CaseIterable, Codable, Identifiable, Hashab
             "Created"
         case .reviewRequested:
             "Review Requested"
+        case .custom:
+            "Custom"
         }
     }
 
@@ -33,6 +36,8 @@ enum PullRequestSectionKind: String, CaseIterable, Codable, Identifiable, Hashab
             "author:\(viewerLogin)"
         case .reviewRequested:
             "review-requested:\(viewerLogin)"
+        case .custom:
+            ""
         }
     }
 }
@@ -60,6 +65,7 @@ enum CounterMode: String, CaseIterable, Codable, Identifiable {
     case assigned
     case created
     case reviewRequested
+    case custom
     case none
 
     var id: Self { self }
@@ -72,6 +78,8 @@ enum CounterMode: String, CaseIterable, Codable, Identifiable {
             "Created"
         case .reviewRequested:
             "Review Requested"
+        case .custom:
+            "Custom"
         case .none:
             "None"
         }
@@ -82,6 +90,7 @@ struct GitHubQuerySettings: Sendable {
     let baseURL: String
     let additionalQuery: String
     let buildInfoMode: BuildInfoMode
+    let customSectionQuery: String
 }
 
 @MainActor
@@ -93,11 +102,14 @@ final class GitBarSettingsStore {
         case showAssigned
         case showCreated
         case showReviewRequested
+        case showCustom
         case showAvatar
         case showLabels
         case refreshIntervalMinutes
         case buildInfoMode
         case counterMode
+        case customSectionTitle
+        case customSectionQuery
     }
 
     static let refreshIntervals = [1, 5, 10, 15, 30]
@@ -123,6 +135,10 @@ final class GitBarSettingsStore {
 
     var showReviewRequested: Bool {
         didSet { persistBool(showReviewRequested, for: .showReviewRequested) }
+    }
+
+    var showCustom: Bool {
+        didSet { persistBool(showCustom, for: .showCustom) }
     }
 
     var showAvatar: Bool {
@@ -151,6 +167,14 @@ final class GitBarSettingsStore {
         didSet { persistEnum(counterMode, for: .counterMode) }
     }
 
+    var customSectionTitle: String {
+        didSet { persistString(customSectionTitle, for: .customSectionTitle) }
+    }
+
+    var customSectionQuery: String {
+        didSet { persistString(customSectionQuery, for: .customSectionQuery) }
+    }
+
     var launchesAtLogin: Bool {
         didSet {
             guard oldValue != launchesAtLogin else { return }
@@ -175,11 +199,14 @@ final class GitBarSettingsStore {
         showAssigned = defaults.object(forKey: Key.showAssigned.rawValue) as? Bool ?? true
         showCreated = defaults.object(forKey: Key.showCreated.rawValue) as? Bool ?? true
         showReviewRequested = defaults.object(forKey: Key.showReviewRequested.rawValue) as? Bool ?? true
+        showCustom = defaults.object(forKey: Key.showCustom.rawValue) as? Bool ?? false
         showAvatar = defaults.object(forKey: Key.showAvatar.rawValue) as? Bool ?? false
         showLabels = defaults.object(forKey: Key.showLabels.rawValue) as? Bool ?? true
         refreshIntervalMinutes = defaults.object(forKey: Key.refreshIntervalMinutes.rawValue) as? Int ?? 5
         buildInfoMode = Self.decodeEnum(BuildInfoMode.self, from: defaults.string(forKey: Key.buildInfoMode.rawValue)) ?? .checkSuites
         counterMode = Self.decodeEnum(CounterMode.self, from: defaults.string(forKey: Key.counterMode.rawValue)) ?? .reviewRequested
+        customSectionTitle = defaults.string(forKey: Key.customSectionTitle.rawValue) ?? "Custom"
+        customSectionQuery = defaults.string(forKey: Key.customSectionQuery.rawValue) ?? ""
         launchesAtLogin = launchService.status == .enabled
     }
 
@@ -194,7 +221,17 @@ final class GitBarSettingsStore {
         if showReviewRequested {
             sections.append(.reviewRequested)
         }
+        if showCustom, !customSectionQuery.trimmed.isEmpty {
+            sections.append(.custom)
+        }
         return sections
+    }
+
+    func title(for section: PullRequestSectionKind) -> String {
+        guard section == .custom else { return section.title }
+
+        let title = customSectionTitle.trimmed
+        return title.isEmpty ? section.title : title
     }
 
     var normalizedAPIBaseURL: String {
@@ -206,7 +243,8 @@ final class GitBarSettingsStore {
         GitHubQuerySettings(
             baseURL: normalizedAPIBaseURL,
             additionalQuery: githubAdditionalQuery.trimmed,
-            buildInfoMode: buildInfoMode
+            buildInfoMode: buildInfoMode,
+            customSectionQuery: customSectionQuery.trimmed
         )
     }
 

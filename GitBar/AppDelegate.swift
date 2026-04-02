@@ -76,6 +76,8 @@ final class GitBarAppModel {
             return settings.showCreated ? String(sections[.created, default: []].count) : nil
         case .reviewRequested:
             return settings.showReviewRequested ? String(sections[.reviewRequested, default: []].count) : nil
+        case .custom:
+            return settings.showCustom && !settings.customSectionQuery.trimmed.isEmpty ? String(sections[.custom, default: []].count) : nil
         case .none:
             return nil
         }
@@ -484,7 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let items = model.sections[section, default: []]
             guard !items.isEmpty else { continue }
 
-            let header = NSMenuItem(title: "\(section.title) (\(items.count))", action: nil, keyEquivalent: "")
+            let header = NSMenuItem(title: "\(model.settings.title(for: section)) (\(items.count))", action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
 
