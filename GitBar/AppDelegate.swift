@@ -203,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menu = NSMenu()
 
     private var refreshTimer: Timer?
+    private var debouncedConfigurationRefreshTask: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var preferencesWindowController: NSWindowController?
     private var aboutWindowController: NSWindowController?
@@ -227,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        debouncedConfigurationRefreshTask?.cancel()
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -235,10 +237,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
-    private func handleConfigurationChange() {
-        rescheduleRefreshTimer()
-        Task {
-            await model.refresh(sendNotification: false)
+    private func handleConfigurationChange(_ notification: Notification) {
+        let effect = configurationChangeEffect(from: notification)
+
+        switch effect {
+        case .refreshImmediately:
+            rescheduleRefreshTimer()
+            debouncedConfigurationRefreshTask?.cancel()
+            Task {
+                await model.refresh(sendNotification: false)
+                rebuildMenu()
+            }
+        case .refreshDebounced:
+            rescheduleRefreshTimer()
+            scheduleDebouncedConfigurationRefresh()
+        case .rebuildMenu:
             rebuildMenu()
         }
     }
@@ -425,9 +438,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: .gitBarConfigurationDidChange,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             Task { @MainActor in
-                self?.handleConfigurationChange()
+                self?.handleConfigurationChange(notification)
             }
         })
 
@@ -456,6 +469,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         refreshTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func configurationChangeEffect(from notification: Notification) -> GitBarConfigurationChangeEffect {
+        guard
+            let rawValue = notification.userInfo?["effect"] as? String,
+            let effect = GitBarConfigurationChangeEffect(rawValue: rawValue)
+        else {
+            return .refreshImmediately
+        }
+
+        return effect
+    }
+
+    private func scheduleDebouncedConfigurationRefresh() {
+        debouncedConfigurationRefreshTask?.cancel()
+        debouncedConfigurationRefreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+
+            await model.refresh(sendNotification: false)
+            rebuildMenu()
+            debouncedConfigurationRefreshTask = nil
+        }
     }
 
     private func rebuildMenu() {

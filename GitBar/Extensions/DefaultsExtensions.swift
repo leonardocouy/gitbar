@@ -7,6 +7,12 @@ extension Notification.Name {
     static let gitBarAuthenticationDidChange = Notification.Name("GitBarAuthenticationDidChange")
 }
 
+enum GitBarConfigurationChangeEffect: String {
+    case refreshImmediately
+    case refreshDebounced
+    case rebuildMenu
+}
+
 enum PullRequestSectionKind: String, CaseIterable, Codable, Identifiable, Hashable {
     case assigned
     case created
@@ -250,22 +256,30 @@ final class GitBarSettingsStore {
 
     private func persistString(_ value: String, for key: Key) {
         defaults.set(value, forKey: key.rawValue)
-        postConfigurationChange()
+        let effect: GitBarConfigurationChangeEffect = switch key {
+        case .customSectionTitle:
+            .rebuildMenu
+        case .githubAPIBaseURL, .githubAdditionalQuery, .customSectionQuery:
+            .refreshDebounced
+        default:
+            .refreshImmediately
+        }
+        postConfigurationChange(effect: effect)
     }
 
     private func persistBool(_ value: Bool, for key: Key) {
         defaults.set(value, forKey: key.rawValue)
-        postConfigurationChange()
+        postConfigurationChange(effect: .refreshImmediately)
     }
 
     private func persistInt(_ value: Int, for key: Key) {
         defaults.set(value, forKey: key.rawValue)
-        postConfigurationChange()
+        postConfigurationChange(effect: .refreshImmediately)
     }
 
     private func persistEnum<T: RawRepresentable>(_ value: T, for key: Key) where T.RawValue == String {
         defaults.set(value.rawValue, forKey: key.rawValue)
-        postConfigurationChange()
+        postConfigurationChange(effect: .refreshImmediately)
     }
 
     private static func decodeEnum<T: RawRepresentable>(_ type: T.Type, from rawValue: String?) -> T? where T.RawValue == String {
@@ -273,7 +287,11 @@ final class GitBarSettingsStore {
         return T(rawValue: rawValue)
     }
 
-    private func postConfigurationChange() {
-        NotificationCenter.default.post(name: .gitBarConfigurationDidChange, object: self)
+    private func postConfigurationChange(effect: GitBarConfigurationChangeEffect) {
+        NotificationCenter.default.post(
+            name: .gitBarConfigurationDidChange,
+            object: self,
+            userInfo: ["effect": effect.rawValue]
+        )
     }
 }
