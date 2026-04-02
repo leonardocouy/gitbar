@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  SCHEME: GitBar
+  APP_NAME: GitBar
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project GitBar.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -derivedDataPath build \
+            -arch arm64 -arch x86_64 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Prepare app bundle
+        run: |
+          APP_PATH="build/Build/Products/Release/${APP_NAME}.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "App not found at $APP_PATH"
+            find build -name "*.app" -type d
+            exit 1
+          fi
+          cp -R "$APP_PATH" "${APP_NAME}.app"
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg-staging
+          cp -R "${APP_NAME}.app" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder dmg-staging \
+            -ov \
+            -format UDZO \
+            "${APP_NAME}.dmg"
+
+      - name: Create ZIP
+        run: |
+          ditto -c -k --keepParent "${APP_NAME}.app" "${APP_NAME}.zip"
+
+      - name: Get version from tag
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            ${{ env.APP_NAME }}.dmg
+            ${{ env.APP_NAME }}.zip
