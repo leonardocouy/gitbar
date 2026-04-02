@@ -114,6 +114,8 @@ struct PreferencesView: View {
                 .font(.caption)
         } header: {
             Label("Display", systemImage: "paintbrush")
+        } footer: {
+            Text("Build status increases GitHub query cost. Choose `None` for the lightest refresh profile when you do not need inline CI results.")
         }
     }
 
