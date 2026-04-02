@@ -304,10 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    @objc
-    private func handleConfigurationChange(_ notification: Notification) {
-        let effect = configurationChangeEffect(from: notification)
-
+    private func handleConfigurationChange(_ effect: GitBarConfigurationChangeEffect) {
         switch effect {
         case .refreshImmediately:
             rescheduleRefreshTimer()
@@ -507,8 +504,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            let effect = self?.configurationChangeEffect(from: notification) ?? .refreshImmediately
             Task { @MainActor in
-                self?.handleConfigurationChange(notification)
+                self?.handleConfigurationChange(effect)
             }
         })
 
@@ -539,7 +537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func configurationChangeEffect(from notification: Notification) -> GitBarConfigurationChangeEffect {
+    nonisolated private func configurationChangeEffect(from notification: Notification) -> GitBarConfigurationChangeEffect {
         guard
             let rawValue = notification.userInfo?["effect"] as? String,
             let effect = GitBarConfigurationChangeEffect(rawValue: rawValue)
