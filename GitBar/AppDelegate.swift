@@ -139,6 +139,8 @@ final class GitBarAppModel {
             return
         }
 
+        guard refreshState != .refreshing else { return }
+
         if let cooldownMessage = activeRateLimitMessage() {
             refreshState = .failed(cooldownMessage)
             if sendNotification {
