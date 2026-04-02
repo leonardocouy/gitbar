@@ -7,6 +7,7 @@ enum GitHubAPIError: LocalizedError {
     case httpStatus(Int, String)
     case missingViewer
     case graphQLErrors([String])
+    case rateLimited(GitHubRateLimit)
 
     var errorDescription: String? {
         switch self {
@@ -20,7 +21,16 @@ enum GitHubAPIError: LocalizedError {
             "GitHub did not return a valid viewer account."
         case .graphQLErrors(let messages):
             messages.joined(separator: "\n")
+        case .rateLimited(let limit):
+            limit.description
         }
+    }
+}
+
+extension GitHubAPIError {
+    var rateLimit: GitHubRateLimit? {
+        guard case .rateLimited(let limit) = self else { return nil }
+        return limit
     }
 }
 
@@ -28,6 +38,37 @@ enum RefreshState: Equatable {
     case idle
     case refreshing
     case failed(String)
+}
+
+enum GitHubRateLimitKind: String, Equatable {
+    case primary
+    case secondary
+}
+
+struct GitHubRateLimit: Equatable {
+    let kind: GitHubRateLimitKind
+    let message: String
+    let limit: Int?
+    let remaining: Int?
+    let resetAt: Date?
+    let retryAfterSeconds: Int?
+    let retryAt: Date?
+
+    var description: String {
+        let prefix = switch kind {
+        case .primary:
+            "GitHub API rate limit exceeded."
+        case .secondary:
+            "GitHub API secondary rate limit exceeded."
+        }
+
+        guard let retryAt else {
+            return message.isEmpty ? prefix : "\(prefix) \(message)"
+        }
+
+        let formattedRetryAt = retryAt.formatted(date: .abbreviated, time: .shortened)
+        return "\(prefix) Retry after \(formattedRetryAt)."
+    }
 }
 
 enum TokenValidationState: Equatable {
@@ -395,4 +436,3 @@ enum GraphQLBuildMapper {
         return []
     }
 }
-

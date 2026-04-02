@@ -49,7 +49,7 @@ struct GitHubClient {
         let result = try decoder.decode(GraphQLSearchResponse.self, from: data)
 
         if let errors = result.errors, !errors.isEmpty {
-            throw GitHubAPIError.graphQLErrors(errors.map(\.message))
+            throw graphQLError(from: errors, response: response)
         }
 
         return result.data?.search.edges.map { $0.node.toSummary(viewerLogin: viewerLogin) } ?? []
@@ -103,7 +103,7 @@ struct GitHubClient {
 
         let result = try JSONDecoder().decode(GraphQLReviewMutationResponse.self, from: data)
         if let errors = result.errors, !errors.isEmpty {
-            throw GitHubAPIError.graphQLErrors(errors.map(\.message))
+            throw graphQLError(from: errors, response: response)
         }
     }
 
@@ -248,7 +248,67 @@ struct GitHubClient {
 
         guard (200..<300).contains(http.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? ""
+            if let rateLimit = parseRateLimit(from: http, message: message) {
+                throw GitHubAPIError.rateLimited(rateLimit)
+            }
             throw GitHubAPIError.httpStatus(http.statusCode, message)
         }
+    }
+
+    private func graphQLError(from errors: [GraphQLError], response: URLResponse) -> GitHubAPIError {
+        let message = errors.map(\.message).joined(separator: "\n")
+
+        if
+            let http = response as? HTTPURLResponse,
+            let rateLimit = parseRateLimit(from: http, message: message)
+        {
+            return .rateLimited(rateLimit)
+        }
+
+        return .graphQLErrors(errors.map(\.message))
+    }
+
+    private func parseRateLimit(from response: HTTPURLResponse, message: String) -> GitHubRateLimit? {
+        let normalizedMessage = message.lowercased()
+        let kind: GitHubRateLimitKind?
+
+        if normalizedMessage.contains("secondary rate limit") {
+            kind = .secondary
+        } else if normalizedMessage.contains("rate limit") {
+            kind = .primary
+        } else if response.statusCode == 429 {
+            kind = .primary
+        } else {
+            kind = nil
+        }
+
+        guard let kind else { return nil }
+
+        let limit = response.value(forHTTPHeaderField: "x-ratelimit-limit").flatMap(Int.init)
+        let remaining = response.value(forHTTPHeaderField: "x-ratelimit-remaining").flatMap(Int.init)
+        let resetAt = response.value(forHTTPHeaderField: "x-ratelimit-reset")
+            .flatMap(TimeInterval.init)
+            .map(Date.init(timeIntervalSince1970:))
+        let retryAfterSeconds = response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init)
+        let now = Date()
+        let retryAt: Date? = if let retryAfterSeconds {
+            now.addingTimeInterval(TimeInterval(retryAfterSeconds))
+        } else if remaining == 0 {
+            resetAt
+        } else if kind == .secondary {
+            now.addingTimeInterval(60)
+        } else {
+            nil
+        }
+
+        return GitHubRateLimit(
+            kind: kind,
+            message: message,
+            limit: limit,
+            remaining: remaining,
+            resetAt: resetAt,
+            retryAfterSeconds: retryAfterSeconds,
+            retryAt: retryAt
+        )
     }
 }
