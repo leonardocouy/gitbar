@@ -141,7 +141,9 @@ final class GitBarAppModel {
 
         guard refreshState != .refreshing else { return }
 
-        if let cooldownMessage = activeRateLimitMessage() {
+        clearExpiredRateLimitCooldownIfNeeded()
+
+        if let cooldownMessage = currentRateLimitMessage() {
             refreshState = .failed(cooldownMessage)
             if sendNotification {
                 notifier.notify(body: cooldownMessage)
@@ -239,17 +241,19 @@ final class GitBarAppModel {
         rateLimitMessage = nil
     }
 
-    private func activeRateLimitMessage() -> String? {
-        guard let cooldownUntil = rateLimitCooldownUntil else { return nil }
+    private func clearExpiredRateLimitCooldownIfNeeded() {
+        guard let cooldownUntil = rateLimitCooldownUntil else { return }
 
         if cooldownUntil <= .now {
             clearRateLimitCooldown()
             if case .rateLimited = tokenValidator.state {
                 tokenValidator.state = viewerLogin.isEmpty ? .idle : .valid(viewerLogin)
             }
-            return nil
         }
+    }
 
+    private func currentRateLimitMessage() -> String? {
+        guard rateLimitCooldownUntil != nil else { return nil }
         return rateLimitMessage ?? "GitHub API rate limit is still active."
     }
 }
