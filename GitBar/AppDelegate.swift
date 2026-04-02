@@ -23,6 +23,8 @@ final class GitBarAppModel {
     var sections: [PullRequestSectionKind: [PullRequestSummary]] = [:]
     var refreshState: RefreshState = .idle
     var lastRefreshDate: Date?
+    var rateLimitCooldownUntil: Date?
+    var rateLimitMessage: String?
 
     init(
         settings: GitBarSettingsStore,
@@ -50,6 +52,7 @@ final class GitBarAppModel {
                 } else {
                     try keychain.set(trimmed, for: .githubToken)
                 }
+                clearRateLimitCooldown()
                 NotificationCenter.default.post(name: .gitBarAuthenticationDidChange, object: self)
             } catch {
                 notifier.notify(body: error.gitBarMessage)
@@ -104,10 +107,20 @@ final class GitBarAppModel {
 
         do {
             let viewer = try await client.fetchViewer(baseURL: settings.normalizedAPIBaseURL, token: token)
+            clearRateLimitCooldown()
             viewerLogin = viewer.login
             viewerName = viewer.name ?? ""
             tokenValidator.state = .valid(viewer.login)
         } catch {
+            if let rateLimit = (error as? GitHubAPIError)?.rateLimit {
+                applyRateLimitCooldown(rateLimit)
+                tokenValidator.state = .rateLimited(rateLimit.description)
+                if sendNotification {
+                    notifier.notify(body: rateLimit.description)
+                }
+                return
+            }
+
             viewerLogin = ""
             viewerName = ""
             sections = [:]
@@ -123,6 +136,14 @@ final class GitBarAppModel {
         guard !token.isEmpty else {
             sections = [:]
             refreshState = .idle
+            return
+        }
+
+        if let cooldownMessage = activeRateLimitMessage() {
+            refreshState = .failed(cooldownMessage)
+            if sendNotification {
+                notifier.notify(body: cooldownMessage)
+            }
             return
         }
 
@@ -156,10 +177,20 @@ final class GitBarAppModel {
                 }
             }
 
+            clearRateLimitCooldown()
             sections = nextSections
             refreshState = .idle
             lastRefreshDate = .now
         } catch {
+            if let rateLimit = (error as? GitHubAPIError)?.rateLimit {
+                applyRateLimitCooldown(rateLimit)
+                refreshState = .failed(rateLimit.description)
+                if sendNotification {
+                    notifier.notify(body: rateLimit.description)
+                }
+                return
+            }
+
             refreshState = .failed(error.gitBarMessage)
             if sendNotification {
                 notifier.notify(body: error.gitBarMessage)
@@ -182,11 +213,42 @@ final class GitBarAppModel {
                 baseURL: settings.normalizedAPIBaseURL,
                 token: token
             )
+            clearRateLimitCooldown()
             notifier.notify(body: "Review submitted: \(event.rawValue.lowercased().replacingOccurrences(of: "_", with: " "))")
             await refresh(sendNotification: false)
         } catch {
+            if let rateLimit = (error as? GitHubAPIError)?.rateLimit {
+                applyRateLimitCooldown(rateLimit)
+                notifier.notify(body: rateLimit.description)
+                return
+            }
+
             notifier.notify(body: "Review failed: \(error.gitBarMessage)")
         }
+    }
+
+    private func applyRateLimitCooldown(_ rateLimit: GitHubRateLimit) {
+        rateLimitCooldownUntil = rateLimit.retryAt
+        rateLimitMessage = rateLimit.description
+    }
+
+    private func clearRateLimitCooldown() {
+        rateLimitCooldownUntil = nil
+        rateLimitMessage = nil
+    }
+
+    private func activeRateLimitMessage() -> String? {
+        guard let cooldownUntil = rateLimitCooldownUntil else { return nil }
+
+        if cooldownUntil <= .now {
+            clearRateLimitCooldown()
+            if case .rateLimited = tokenValidator.state {
+                tokenValidator.state = viewerLogin.isEmpty ? .idle : .valid(viewerLogin)
+            }
+            return nil
+        }
+
+        return rateLimitMessage ?? "GitHub API rate limit is still active."
     }
 }
 

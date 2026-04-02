@@ -76,6 +76,7 @@ enum TokenValidationState: Equatable {
     case validating
     case valid(String)
     case invalid(String)
+    case rateLimited(String)
 
     var symbolName: String {
         switch self {
@@ -87,6 +88,8 @@ enum TokenValidationState: Equatable {
             "checkmark.circle.fill"
         case .invalid:
             "exclamationmark.circle.fill"
+        case .rateLimited:
+            "clock.badge.exclamationmark"
         }
     }
 
@@ -100,6 +103,8 @@ enum TokenValidationState: Equatable {
             .systemGreen
         case .invalid:
             .systemRed
+        case .rateLimited:
+            .systemOrange
         }
     }
 
@@ -112,6 +117,8 @@ enum TokenValidationState: Equatable {
         case .valid(let login):
             "Authenticated as \(login)"
         case .invalid(let message):
+            message
+        case .rateLimited(let message):
             message
         }
     }
