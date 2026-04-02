@@ -182,6 +182,7 @@ final class GitBarAppModel {
             }
 
             clearRateLimitCooldown()
+            notifyNewCustomSectionPRs(old: sections[.custom, default: []], new: nextSections[.custom, default: []])
             sections = nextSections
             refreshState = .idle
             lastRefreshDate = .now
@@ -255,6 +256,28 @@ final class GitBarAppModel {
     private func currentRateLimitMessage() -> String? {
         guard rateLimitCooldownUntil != nil else { return nil }
         return rateLimitMessage ?? "GitHub API rate limit is still active."
+    }
+
+    private func notifyNewCustomSectionPRs(old: [PullRequestSummary], new: [PullRequestSummary]) {
+        guard settings.showCustom else { return }
+
+        let oldIds = Set(old.map(\.id))
+        let newPRs = new.filter { !oldIds.contains($0.id) }
+        guard !newPRs.isEmpty else { return }
+
+        let sectionTitle = settings.title(for: .custom)
+
+        if newPRs.count == 1, let pr = newPRs.first {
+            notifier.notify(
+                title: "New PR in \(sectionTitle)",
+                body: "#\(pr.number) \(pr.title) by \(pr.author.login)"
+            )
+        } else {
+            notifier.notify(
+                title: "\(newPRs.count) new PRs in \(sectionTitle)",
+                body: newPRs.prefix(3).map { "#\($0.number) \($0.title)" }.joined(separator: "\n")
+            )
+        }
     }
 }
 
